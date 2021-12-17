@@ -1,11 +1,4 @@
-﻿// CMakeProject1.cpp: определяет точку входа для приложения.
-//
-
-#include "pendulum_sim.h"
-
-#include <Mahi/Gui.hpp>
-#include <Mahi/Util.hpp>
-#include <string>
+﻿#include "pendulum_sim.h"
 
 struct ScrollingBuffer {
 	int MaxSize;
@@ -38,21 +31,23 @@ private:
 	float scale = 100; //pixels in one meter
 	float infoWindowSize = 450;
 
-	double simulationTime = 0;
 
 	//PHYSICS VARIABLES
 	double g = 9.81;
     double l = 1;
 	double lambda = 0;
 	double fixedDt = 0.01666;
+	double simulationTime = 0;
 
 	//INITIAL VALUES
 	double initial_fi = 1.57;
 
+	//SIMULATED VARIABLES
 	double acc = 0;
 	double vel = 0;
 	double fi = initial_fi;
 
+	//BASIC LOGIC
 	bool started = false;
 	bool simulating = false;
 	bool useVerlet = true;
@@ -73,6 +68,8 @@ private:
 	ScrollingBuffer acc_data;
 	ScrollingBuffer phase_data;
 
+	double max_fi = 0, min_fi = 0;
+
 public:
 	PendulumApp() : Application(1200, 600, "pendulum_sim") {
 		glfwSwapInterval(1);
@@ -82,28 +79,15 @@ public:
 		worldOrigin.y = get_window_size().y / 2.f;
 	}
 
-	void Euiler() {
-		acc = ((-(g / l)) * std::sin(fi)) - 2 * lambda * vel;
-		vel += acc * fixedDt;
-		fi = fi + vel * fixedDt;
-	}
-
-	void Verlet() {
-		double vel_pr, acc_pr;
-		acc = ((-(g / l)) * std::sin(fi)) - 2 * lambda * vel;
-		fi = fi + vel * fixedDt + 0.5 * acc * fixedDt * fixedDt;
-		vel_pr = vel + acc * fixedDt;
-		acc_pr = ((-(g / l)) * std::sin(fi)) - 2 * lambda * vel_pr;
-		vel = vel + 0.5 * (acc + acc_pr) * fixedDt;
-	}
-
 	void update() override {
 		//for(int i = 0; i < 4; i++)
 		if (simulating) {
 			double fi_last = fi;
+
 			if (useVerlet) Verlet();
 			else Euiler();
 
+			//measuring period
 			if (fi >= 0 && fi_last < 0) {
 				temp = fixedDt * fi_last / (fi_last - fi);
 				if (Nt == 0) {
@@ -117,23 +101,31 @@ public:
 
 			simulationTime += fixedDt;
 
-
+			//log variables
 			fi_data.AddPoint(simulationTime, fi);
 			vel_data.AddPoint(simulationTime, vel);
 			acc_data.AddPoint(simulationTime, acc);
 			phase_data.AddPoint(fi, vel);
 		}
 
+		//calculate period
 		huygens = 2.0 * 3.1415926 * std::sqrt(l / g);
 		CEI = 4.0 * std::sqrt(l / g) * cei1(std::sin(initial_fi / 2.0));
 		
-		if (!started) fi = initial_fi;
+		if (!started) {
+			fi = initial_fi;
+			max_fi = fi;
+			min_fi = fi;
+		}
+
+		if (fi > max_fi) max_fi = fi;
+		if (fi < min_fi) min_fi = fi;
 
 		drawPendulum();
 
 		
 
-		//UI
+		//------------------UI
 		ImVec2 pos = ImGui::GetMainViewport()->Pos;
 		ImVec2 size = ImGui::GetMainViewport()->Size;
 
@@ -141,6 +133,8 @@ public:
 		ImGui::SetNextWindowSize({ infoWindowSize, size.y});
 		ImGui::Begin("Info window", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar);
 		ImGui::Text("FPS: %.3f", ImGui::GetIO().Framerate);
+
+		//PLAY PAUSE RESET BUTTONS
 		if (ImGui::Button("Play", ImVec2(50, 0))) {
 			simulating = true;
 			started = true;
@@ -150,7 +144,7 @@ public:
 			simulating = false;
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Reset", ImVec2(50, 0))) {
+		if (ImGui::Button("Reset", ImVec2(50, 0))) { //full reset all simulation variables
 			started = false;
 			simulating = false;
 			fi = initial_fi;
@@ -166,7 +160,11 @@ public:
 			phase_data.Erase();
 		}
 
+		ImGui::SliderFloat("Scale", &scale, 10, 500);
+
+		//PHYSICS VARIABLES
 		ImGui::Checkbox("Use Verlet", &useVerlet);
+
 		ImGui::Text("Variables:");
 		
 		ImGui::Indent();
@@ -178,6 +176,8 @@ public:
 		ImGui::Unindent();
 
 		ImGui::Spacing();
+
+		//PERIODS
 		ImGui::Text("Calculated period:");
 
 		std::string sHuygens = "Huygens: " + std::to_string(huygens) + " s.";
@@ -191,6 +191,7 @@ public:
 
 		ImGui::Spacing();
 
+		//PLOTS
 		static float history = 10.f;
 		ImGui::SliderFloat("Plot history", &history, 1, 30, "%.1f s");
 
@@ -216,12 +217,24 @@ public:
 		}
 
 		ImGui::End();
-
-		
-
 	}
 
 private:
+	//CALCULATIONS
+	void Euiler() {
+		acc = ((-(g / l)) * std::sin(fi)) - 2 * lambda * vel;
+		vel += acc * fixedDt;
+		fi = fi + vel * fixedDt;
+	}
+
+	void Verlet() {
+		double vel_pr, acc_pr;
+		acc = ((-(g / l)) * std::sin(fi)) - 2 * lambda * vel;
+		fi = fi + vel * fixedDt + 0.5 * acc * fixedDt * fixedDt;
+		vel_pr = vel + acc * fixedDt;
+		acc_pr = ((-(g / l)) * std::sin(fi)) - 2 * lambda * vel_pr;
+		vel = vel + 0.5 * (acc + acc_pr) * fixedDt;
+	}
 
 	double cei1(double k) {
 		double a, b, t;
@@ -233,36 +246,71 @@ private:
 		return a - b * std::log(t);
 	}
 
+	//GRAPHICS
 	void drawPendulum() {
+		drawGrid();
+		
+		//cool visualizers 
+		mahi::gui::Vec2 maxpos = worldToScreen({ (float)(std::sin(max_fi) * l), (float)(std::cos(max_fi) * l) });
+		mahi::gui::Vec2 minpos = worldToScreen({ (float)(std::sin(min_fi) * l), (float)(std::cos(min_fi) * l) });
+		nvgBeginPath(m_vg);
+		nvgStrokeColor(m_vg, nvgRGBA(100, 100, 100, 100));
+		nvgStrokeWidth(m_vg, 2);
+
+		nvgMoveTo(m_vg, maxpos.x - std::sin(max_fi) * 8.f, maxpos.y - std::cos(max_fi) * 8.f);
+		nvgLineTo(m_vg, maxpos.x + std::sin(max_fi) * 8.f, maxpos.y + std::cos(max_fi) * 8.f);
+
+		nvgMoveTo(m_vg, minpos.x - std::sin(min_fi) * 8.f, minpos.y - std::cos(min_fi) * 8.f);
+		nvgLineTo(m_vg, minpos.x + std::sin(min_fi) * 8.f, minpos.y + std::cos(min_fi) * 8.f);
+
+		nvgStroke(m_vg);
+
+		//pendulum
 		mahi::gui::Vec2 pos = { (float)(std::sin(fi) * l), (float)(std::cos(fi) * l) };
 		mahi::gui::Vec2 screenPos = worldToScreen(pos);
 
 		nvgBeginPath(m_vg);
-		nvgStrokeColor(m_vg, nvgRGBA(100, 100, 100, 255));
-		nvgStrokeWidth(m_vg, 1);
-
-		nvgEllipse(m_vg, screenPos.x, screenPos.y, 5.f, 5.f);
+		nvgStrokeColor(m_vg, nvgRGB(200, 200, 200));
+		nvgStrokeWidth(m_vg, 2);
 
 		nvgMoveTo(m_vg, worldOrigin.x, worldOrigin.y);
 		nvgLineTo(m_vg, screenPos.x, screenPos.y);
 
 		nvgStroke(m_vg);
+
+		nvgBeginPath(m_vg);
+		nvgEllipse(m_vg, screenPos.x, screenPos.y, 5.f, 5.f);
+		nvgFillColor(m_vg, nvgRGB(200, 200, 200));
+		nvgFill(m_vg);
+
 	}
 
 	void drawGrid() {
 		nvgBeginPath(m_vg);
-		nvgStrokeColor(m_vg, nvgRGBA(100,100,100,255));
+		nvgStrokeColor(m_vg, nvgRGBA(140,140,140,255));
 		nvgStrokeWidth(m_vg, 1);
 
-		nvgEllipse(m_vg, worldOrigin.x, worldOrigin.y, 5.f, 5.f);
+		float r1 = l * scale;
+		nvgEllipse(m_vg, worldOrigin.x, worldOrigin.y, r1, r1);
 
-		nvgMoveTo(m_vg, 0, 10);
-		nvgLineTo(m_vg, get_window_size().x, 10);
-		nvgMoveTo(m_vg, 0, 20);
-		nvgLineTo(m_vg, get_window_size().x, 20);
+		nvgStroke(m_vg);
+
+		nvgBeginPath(m_vg);
+		nvgStrokeColor(m_vg, nvgRGBA(100, 100, 100, 100));
+		nvgStrokeWidth(m_vg, 1);
+
+		for (float i = 0.5f; i < (get_window_size().y / 2.f) / scale; i += 0.5f) {
+			nvgEllipse(m_vg, worldOrigin.x, worldOrigin.y, i * scale, i * scale);
+		}
+
+		nvgMoveTo(m_vg, 0, worldOrigin.y);
+		nvgLineTo(m_vg, get_window_size().x - infoWindowSize, worldOrigin.y);
+		nvgMoveTo(m_vg, worldOrigin.x, 0);
+		nvgLineTo(m_vg, worldOrigin.x, get_window_size().y);
 		nvgStroke(m_vg);
 	}
 
+	//UTILS
 	mahi::gui::Vec2 screenToWorld(mahi::gui::Vec2 pos) {
 		return (pos - worldOrigin) / scale;
 	}
